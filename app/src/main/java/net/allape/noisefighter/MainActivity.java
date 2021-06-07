@@ -81,7 +81,7 @@ public class MainActivity extends AppCompatActivity {
 
         YAxis leftAxis = chart.getAxisLeft();
         leftAxis.setAxisMaximum(Short.MAX_VALUE);
-        leftAxis.setAxisMinimum(0);
+        leftAxis.setAxisMinimum(Short.MIN_VALUE);
         leftAxis.setDrawAxisLine(false);
         leftAxis.setDrawZeroLine(false);
         leftAxis.setDrawGridLines(false);
@@ -100,7 +100,11 @@ public class MainActivity extends AppCompatActivity {
             short peak = 0;
             for (int i = 0; i < data.length; i++) {
                 short one = data[i];
-                values.add(new Entry(i, one));
+
+                // 避免显示过多
+                if (i % (1 << 4) == 0) {
+                    values.add(new Entry(i, one));
+                }
 
                 if (one  > peak) {
                     peak = one;
@@ -133,6 +137,14 @@ public class MainActivity extends AppCompatActivity {
         new Thread(audioRecordRunnable).start();
 
         // 播放器
+//        track = new AudioTrack(
+//                AudioManager.STREAM_MUSIC,
+//                SAMPLE_RATE_IN_HZ,
+//                AudioFormat.CHANNEL_OUT_MONO,
+//                AudioFormat.ENCODING_PCM_16BIT,
+//                audioRecordRunnable.getBufferSize(),
+//                AudioTrack.MODE_STREAM
+//        );
         track = new AudioTrack.Builder()
                 .setAudioAttributes(new AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -151,6 +163,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         this.audioRecordRunnable.close();
+        track.release();
 //        this.chart.clear();
     }
 
@@ -224,9 +237,15 @@ public class MainActivity extends AppCompatActivity {
 
         try {
             track.play();
-            for (short[] data : recorded) {
-                track.write(data, 0, data.length);
+            int shortLength = recorded.get(0).length;
+            short[] data = new short[recorded.size() * shortLength];
+            for (int i = 0; i < recorded.size(); i++) {
+                System.arraycopy(recorded.get(i), 0, data, i * shortLength, shortLength);
             }
+            Log.v(LOG_TAG, "Playback with: " + data.length + " * 2 bytes");
+            track.write(data, 0, data.length);
+            // 延迟操作
+            Thread.sleep(1000);
             track.stop();
         } catch (Exception e) {
             e.printStackTrace();
@@ -267,12 +286,11 @@ public class MainActivity extends AppCompatActivity {
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO);
 
             // Audio
-            short[] audioData;
-            int bufferReadResult;
             AudioRecord audioRecord = new AudioRecord(MediaRecorder.AudioSource.MIC, rateInHz,
                     AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize);
 
-            audioData = new short[bufferSize];
+            int bufferReadResult;
+            short[] audioData = new short[bufferSize / 2];
 
             Log.d(LOG_TAG, "audioRecord.startRecord()");
             audioRecord.startRecording();
