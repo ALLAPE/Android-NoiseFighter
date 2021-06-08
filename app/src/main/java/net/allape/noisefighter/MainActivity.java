@@ -4,12 +4,13 @@ import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.media.AudioAttributes;
 import android.media.AudioFormat;
+import android.media.AudioManager;
 import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.util.Log;
@@ -55,7 +56,8 @@ public class MainActivity extends AppCompatActivity {
     private static final VibrationEffect ONE_SHOT = VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE);
 
     // 采样率
-    private static final int SAMPLE_RATE_IN_HZ = 44100;
+//    private static final int SAMPLE_RATE_IN_HZ = 44100;
+    private static final int SAMPLE_RATE_IN_HZ = 30000;
     // 频道, 单声道为1
     private static final int CHANNEL = 1;
     // 码率 bytes per second
@@ -91,7 +93,14 @@ public class MainActivity extends AppCompatActivity {
     // 已经写入了的数据长度(byte数量)
     private long wavBytes = 0;
 
+    // 是否暂停图表刷新
+    private boolean chartPaused = false;
+    // 图表压缩内容的值
+    private final int chartScale = 1 << 4;
+
     private LineChart chart;
+
+    private Handler handler;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -253,6 +262,10 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        // 图表暂停/开始刷新按钮
+        Button chartButton = findViewById(R.id.chart_button);
+        chartButton.setOnClickListener(view -> chartPaused = !chartPaused);
+
         // 图表
         chart = findViewById(R.id.audio_chart);
         chart.setBackgroundColor(Color.WHITE);
@@ -278,6 +291,8 @@ public class MainActivity extends AppCompatActivity {
 
         chart.invalidate();
 
+        handler = new Handler();
+
         // 滑条
         Slider thresholdSlider = findViewById(R.id.threshold_slider);
         thresholdSlider.setValue(threshold);
@@ -288,21 +303,20 @@ public class MainActivity extends AppCompatActivity {
 
         // 录音器
         micRunnable = new MicRunnable(SAMPLE_RATE_IN_HZ, data -> {
-
             // 图表用的数据
-            ArrayList<Entry> values = new ArrayList<>(data.length);
+            ArrayList<Entry> values = new ArrayList<>(data.length / chartScale);
 
-            // 峰值音量
+            // 振幅峰值
             short peak = 0;
             for (int i = 0; i < data.length; i+=2) {
                 short one = (short) (data[i] | (data[i + 1] << 8));
 
                 // 避免显示过多
-                if (i % (1 << 4) == 0) {
+                if (i % chartScale == 0) {
                     values.add(new Entry(i, one));
                 }
 
-                if (one  > peak) {
+                if (one > peak) {
                     peak = one;
                 }
             }
@@ -312,7 +326,7 @@ public class MainActivity extends AppCompatActivity {
                 if (peak >= threshold) {
                     // 图表背景颜色改为绿色
                     chart.setBackgroundColor(Color.RED);
-                    if (recorded.size() + 1 == RECORDED_MAX_SIZE) {
+                    if (recorded.size() + 1 >= RECORDED_MAX_SIZE) {
                         play();
                     } else {
                         recorded.add(data);
@@ -327,7 +341,10 @@ public class MainActivity extends AppCompatActivity {
             }
 
             // 重新渲染图表
-            setData(values);
+            if (!chartPaused) {
+                handler.post(() -> setData(values));
+                // setData(values);
+            }
 
             // 写入数据
             if (wav != null) {
@@ -347,18 +364,27 @@ public class MainActivity extends AppCompatActivity {
         new Thread(micRunnable).start();
 
         // 播放器
-        track = new AudioTrack.Builder()
-                .setAudioAttributes(new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build())
-                .setAudioFormat(new AudioFormat.Builder()
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .setEncoding(SAMPLE_FORMAT)
-                        .setSampleRate(SAMPLE_RATE_IN_HZ)
-                        .build())
-                .setBufferSizeInBytes(micRunnable.getBufferSize())
-                .build();
+        // noinspection deprecation
+        track = new AudioTrack(
+                AudioManager.STREAM_MUSIC,
+                SAMPLE_RATE_IN_HZ,
+                AudioFormat.CHANNEL_OUT_MONO,
+                SAMPLE_FORMAT,
+                micRunnable.getBufferSize(),
+                AudioTrack.MODE_STREAM
+        );
+//        track = new AudioTrack.Builder()
+//                .setAudioAttributes(new AudioAttributes.Builder()
+//                        .setUsage(AudioAttributes.USAGE_MEDIA)
+//                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+//                        .build())
+//                .setAudioFormat(new AudioFormat.Builder()
+//                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+//                        .setEncoding(SAMPLE_FORMAT)
+//                        .setSampleRate(SAMPLE_RATE_IN_HZ)
+//                        .build())
+//                .setBufferSizeInBytes(micRunnable.getBufferSize())
+//                .build();
 
         initialized = true;
     }
@@ -428,13 +454,18 @@ public class MainActivity extends AppCompatActivity {
         try {
             track.play();
             int shortLength = recorded.get(0).length;
-            byte[] data = new byte[recorded.size() * shortLength];
-            for (int i = 0; i < recorded.size(); i++) {
-                System.arraycopy(recorded.get(i), 0, data, i * shortLength, shortLength);
+//            byte[] data = new byte[recorded.size() * shortLength];
+//            for (int i = 0; i < recorded.size(); i++) {
+//                System.arraycopy(recorded.get(i), 0, data, i * shortLength, shortLength);
+//            }
+//            Log.v(LOG_TAG, "Playback with: " + data.length + " * 2 bytes");
+//            track.write(data, 0, data.length);
+
+            for (byte[] bytes : recorded) {
+                track.write(bytes, 0, bytes.length);
             }
-            Log.v(LOG_TAG, "Playback with: " + data.length + " * 2 bytes");
-            track.write(data, 0, data.length);
-            // 延迟操作
+            Log.v(LOG_TAG, "Playback with: " + recorded.size() * shortLength + "bytes");
+
             Thread.sleep(1000);
             track.stop();
         } catch (Exception e) {
@@ -460,7 +491,7 @@ public class MainActivity extends AppCompatActivity {
         // 是否在下个循环停止录音
         protected boolean endAtNext = false;
         // buffer大小
-        private final int bufferSize;
+        protected int bufferSize;
 
         public MicRunnable(int rateInHz, AudioRecordRunnableCallback callback) {
             this.rateInHz = rateInHz;
@@ -520,13 +551,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * 正弦发生器
+     * 正弦发生器 - 有问题
      */
+    @SuppressWarnings("unused")
     static class ToneRunnable extends MicRunnable {
 
-        private static final int BUFFER_SIZE = 2048;
-
-        private final int frequency;
+        private final double increment;
 
         public ToneRunnable(int rateInHz, AudioRecordRunnableCallback callback) {
             this(rateInHz, 1000, callback);
@@ -534,18 +564,19 @@ public class MainActivity extends AppCompatActivity {
 
         public ToneRunnable(int rateInHz, int frequency, AudioRecordRunnableCallback callback) {
             super(rateInHz, callback);
-            this.frequency = frequency;
+            increment = 2 * Math.PI * frequency / rateInHz;
+            bufferSize = (int) (180 / increment);
+            bufferSize *= 2;
         }
 
         @Override
         public void run() {
-            byte[] buffer = new byte[BUFFER_SIZE];
-            double increment = 2 * Math.PI * frequency / rateInHz;
+            byte[] buffer = new byte[bufferSize * 2];
+            double[] samples = new double[bufferSize];
             double angle = 0;
-            double[] samples = new double[BUFFER_SIZE / 2];
 
             // 处理一个buffer所需要的时间
-            long oneBufferTime = 1000 / (rateInHz / BUFFER_SIZE);
+            long oneBufferTime = 1000 / (rateInHz / bufferSize);
 
             while (!endAtNext) {
                 long beforeProcess = System.currentTimeMillis();
@@ -567,11 +598,6 @@ public class MainActivity extends AppCompatActivity {
                     e.printStackTrace();
                 }
             }
-        }
-
-        @Override
-        public int getBufferSize() {
-            return BUFFER_SIZE;
         }
 
     }

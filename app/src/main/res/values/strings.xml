@@ -3,4 +3,5 @@
     <string name="StartRecording">Record</string>
     <string name="StopRecording">Stop &amp; Save</string>
     <string name="RecordFilePathDefault">Tap RECORD to start</string>
+    <string name="ChartButton">Chart</string>
 </resources>
