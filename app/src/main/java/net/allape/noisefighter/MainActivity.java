@@ -43,11 +43,15 @@ public class MainActivity extends AppCompatActivity {
 
     // 采样率
     private static final int SAMPLE_RATE_IN_HZ = 44100;
+    // 频道, 单声道为1
+    private static final int CHANNEL = 1;
+    // 码率 bytes per second
+    private static final int BYTE_RATE = SAMPLE_RATE_IN_HZ * CHANNEL * 2;
 
     // 最大缓存数量, 超出时直接播放
-    private static final int RECORDED_MAX_SIZE = 1000;
+    private static final int RECORDED_MAX_SIZE = 10000;
     // 缓存录音
-    private static final ArrayList<short[]> recorded = new ArrayList<>(RECORDED_MAX_SIZE);
+    private static final ArrayList<byte[]> recorded = new ArrayList<>(RECORDED_MAX_SIZE);
 
     // 是否初始化
     private boolean initialized = false;
@@ -61,7 +65,7 @@ public class MainActivity extends AppCompatActivity {
     // 震动器
     Vibrator vibrator;
     // 录音器
-    private AudioRecordRunnable audioRecordRunnable;
+    private MicRunnable micRunnable;
     // 播放器
     private AudioTrack track;
 
@@ -93,7 +97,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (audioRecordRunnable != null) audioRecordRunnable.close();
+        if (micRunnable != null) micRunnable.close();
         if (track != null) track.release();
     }
 
@@ -162,18 +166,18 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // 录音器
-        audioRecordRunnable = new ToneRunnable(SAMPLE_RATE_IN_HZ, data -> {
+        micRunnable = new MicRunnable(SAMPLE_RATE_IN_HZ, data -> {
 
             // 图表用的数据
             ArrayList<Entry> values = new ArrayList<>(data.length);
 
             // 峰值音量
             short peak = 0;
-            for (int i = 0; i < data.length; i++) {
-                short one = data[i];
+            for (int i = 0; i < data.length; i+=2) {
+                short one = (short) (data[i] | (data[i + 1] << 8));
 
                 // 避免显示过多
-                if (i % (1 << 6) == 0) {
+                if (i % (1 << 4) == 0) {
                     values.add(new Entry(i, one));
                 }
 
@@ -204,7 +208,7 @@ public class MainActivity extends AppCompatActivity {
             // 重新渲染图表
             setData(values);
         });
-        new Thread(audioRecordRunnable).start();
+        new Thread(micRunnable).start();
 
         // 播放器
         track = new AudioTrack.Builder()
@@ -217,7 +221,7 @@ public class MainActivity extends AppCompatActivity {
                         .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                         .setSampleRate(SAMPLE_RATE_IN_HZ)
                         .build())
-                .setBufferSizeInBytes(audioRecordRunnable.getBufferSize())
+                .setBufferSizeInBytes(micRunnable.getBufferSize())
                 .build();
 
         initialized = true;
@@ -249,18 +253,13 @@ public class MainActivity extends AppCompatActivity {
 
             lineDataSet.setAxisDependency(YAxis.AxisDependency.LEFT);
             lineDataSet.setColor(Color.BLACK);
-            lineDataSet.setDrawCircles(false);
             lineDataSet.setLineWidth(2f);
-            lineDataSet.setCircleRadius(3f);
+            lineDataSet.setDrawCircles(false);
             lineDataSet.setFillAlpha(255);
-            lineDataSet.setDrawFilled(true);
+            lineDataSet.setDrawFilled(false);
             lineDataSet.setFillColor(Color.WHITE);
             lineDataSet.setHighLightColor(Color.RED);
             lineDataSet.setDrawCircleHole(false);
-            lineDataSet.setFillFormatter((dataSet, dataProvider) -> {
-                // return 0;
-                return chart.getAxisLeft().getAxisMinimum();
-            });
 
             ArrayList<ILineDataSet> dataSets = new ArrayList<>();
             dataSets.add(lineDataSet); // add the data sets
@@ -293,7 +292,7 @@ public class MainActivity extends AppCompatActivity {
         try {
             track.play();
             int shortLength = recorded.get(0).length;
-            short[] data = new short[recorded.size() * shortLength];
+            byte[] data = new byte[recorded.size() * shortLength];
             for (int i = 0; i < recorded.size(); i++) {
                 System.arraycopy(recorded.get(i), 0, data, i * shortLength, shortLength);
             }
@@ -315,7 +314,7 @@ public class MainActivity extends AppCompatActivity {
     /**
      * 录音器
      */
-    static class AudioRecordRunnable implements Runnable {
+    static class MicRunnable implements Runnable {
 
         // 采样率
         protected final int rateInHz;
@@ -327,7 +326,7 @@ public class MainActivity extends AppCompatActivity {
         // buffer大小
         private final int bufferSize;
 
-        public AudioRecordRunnable(int rateInHz, AudioRecordRunnableCallback callback) {
+        public MicRunnable(int rateInHz, AudioRecordRunnableCallback callback) {
             this.rateInHz = rateInHz;
             this.callback = callback;
 
@@ -345,7 +344,7 @@ public class MainActivity extends AppCompatActivity {
                     AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize);
 
             int bufferReadResult;
-            short[] audioData = new short[bufferSize / 2];
+            byte[] audioData = new byte[bufferSize];
 
             Log.d(LOG_TAG, "audioRecord.startRecord()");
             audioRecord.startRecording();
@@ -354,7 +353,7 @@ public class MainActivity extends AppCompatActivity {
                 bufferReadResult = audioRecord.read(audioData, 0, audioData.length);
                 if (bufferReadResult > 0) {
                     try {
-                        callback.onShortArray(audioData);
+                        callback.onData(audioData);
                     } catch (Exception e) {
                         Log.e(LOG_TAG, e.getMessage());
                         e.printStackTrace();
@@ -379,7 +378,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         interface AudioRecordRunnableCallback {
-            void onShortArray(short[] data);
+            void onData(byte[] data);
         }
 
     }
@@ -387,7 +386,7 @@ public class MainActivity extends AppCompatActivity {
     /**
      * 正弦发生器
      */
-    static class ToneRunnable extends AudioRecordRunnable {
+    static class ToneRunnable extends MicRunnable {
 
         private static final int BUFFER_SIZE = 2048;
 
@@ -404,19 +403,21 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void run() {
-            short[] buffer = new short[BUFFER_SIZE];
+            byte[] buffer = new byte[BUFFER_SIZE];
             double increment = 2 * Math.PI * frequency / rateInHz;
             double angle = 0;
-            double[] samples = new double[BUFFER_SIZE];
+            double[] samples = new double[BUFFER_SIZE / 2];
 
             // 处理一个buffer所需要的时间
             long oneBufferTime = 1000 / (rateInHz / BUFFER_SIZE);
 
             while (!endAtNext) {
                 long beforeProcess = System.currentTimeMillis();
-                for (int i = 0; i < samples.length; i++) {
+                for (int i = 0, j = 0; i < samples.length; i++, j+=2) {
                     samples[i] = Math.sin(angle);
-                    buffer[i] = (short) (samples[i] * Short.MAX_VALUE);
+                    short oneShort = (short) (samples[i] * Short.MAX_VALUE);
+                    buffer[j] = (byte) oneShort;
+                    buffer[j + 1] = (byte) (oneShort >>> 8);
                     angle = angle + increment;
                 }
                 try {
@@ -425,7 +426,7 @@ public class MainActivity extends AppCompatActivity {
                         //noinspection BusyWait
                         Thread.sleep(waitingTime);
                     }
-                    callback.onShortArray(buffer);
+                    callback.onData(buffer);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
