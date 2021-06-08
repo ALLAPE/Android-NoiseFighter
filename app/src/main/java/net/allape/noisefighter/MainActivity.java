@@ -1,6 +1,8 @@
 package net.allape.noisefighter;
 
 import android.Manifest;
+import android.content.Context;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
@@ -8,9 +10,13 @@ import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.os.Bundle;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.util.Log;
+import android.widget.Button;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.github.mikephil.charting.charts.LineChart;
@@ -30,6 +36,10 @@ import pub.devrel.easypermissions.EasyPermissions;
 public class MainActivity extends AppCompatActivity {
 
     private static final String LOG_TAG = "MainActivity";
+    private static final int PERMISSION_REQUEST_CODE = 2021;
+
+    // OneShot震动
+    private static final VibrationEffect ONE_SHOT = VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE);
 
     // 采样率
     private static final int SAMPLE_RATE_IN_HZ = 44100;
@@ -39,6 +49,8 @@ public class MainActivity extends AppCompatActivity {
     // 缓存录音
     private static final ArrayList<short[]> recorded = new ArrayList<>(RECORDED_MAX_SIZE);
 
+    // 是否初始化
+    private boolean initialized = false;
 
     // 需要进行记录的阈值: 峰值达到这个阈值开始录音、离开这个阈值结束录音(如果已经开始录音了)
     // = Short.MAX_VALUE / 3
@@ -46,9 +58,15 @@ public class MainActivity extends AppCompatActivity {
     // 是否正在播放声音
     private boolean playing = false;
 
-    private LineChart chart;
+    // 震动器
+    Vibrator vibrator;
+    // 录音器
     private AudioRecordRunnable audioRecordRunnable;
+    // 播放器
     private AudioTrack track;
+
+    private Button recordButton;
+    private LineChart chart;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,16 +74,61 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         // 检查权限
-        boolean hasPermissions = EasyPermissions.hasPermissions(this, Manifest.permission.RECORD_AUDIO);
-        if (!hasPermissions) {
-            Toast.makeText(this, "Please grant all permissions in app settings", Toast.LENGTH_LONG).show();
+        boolean hasPermissions = EasyPermissions.hasPermissions(
+                this,
+                Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+        );
+        if (hasPermissions) {
+            this.init();
+        } else {
+            // shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO);
+            requestPermissions(new String[]{
+                    Manifest.permission.RECORD_AUDIO,
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+            }, PERMISSION_REQUEST_CODE);
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (audioRecordRunnable != null) audioRecordRunnable.close();
+        if (track != null) track.release();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            for (int i = 0; i < permissions.length; i++) {
+                if (grantResults[i] == PackageManager.PERMISSION_DENIED) {
+                    Toast.makeText(this, "Please grant all permissions in app settings", Toast.LENGTH_LONG).show();
+                    return;
+                }
+            }
+        }
+        this.init();
+    }
+
+    /**
+     * 初始化组件
+     */
+    private void init() {
+        if (initialized) {
+            Log.w(LOG_TAG, "has been initialized");
             return;
         }
 
-        Slider thresholdSlider = findViewById(R.id.threshold_slider);
-        thresholdSlider.setValue(threshold);
-        thresholdSlider.addOnChangeListener((slider, value, fromUser) -> threshold = (int) value);
+        vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
 
+        // 录音按钮
+        recordButton = findViewById(R.id.record_button);
+        recordButton.setOnClickListener(view -> {
+
+        });
+
+        // 图表
         chart = findViewById(R.id.audio_chart);
         chart.setBackgroundColor(Color.WHITE);
         chart.setDrawGridBackground(true);
@@ -90,6 +153,14 @@ public class MainActivity extends AppCompatActivity {
 
         chart.invalidate();
 
+        // 滑条
+        Slider thresholdSlider = findViewById(R.id.threshold_slider);
+        thresholdSlider.setValue(threshold);
+        thresholdSlider.addOnChangeListener((slider, value, fromUser) -> {
+            threshold = (int) value;
+            vibrator.vibrate(ONE_SHOT);
+        });
+
         // 录音器
         audioRecordRunnable = new AudioRecordRunnable(SAMPLE_RATE_IN_HZ, data -> {
 
@@ -110,7 +181,6 @@ public class MainActivity extends AppCompatActivity {
                     peak = one;
                 }
             }
-
 
             // 正在播放声音时不处理任何数据
             if (!playing) {
@@ -137,14 +207,6 @@ public class MainActivity extends AppCompatActivity {
         new Thread(audioRecordRunnable).start();
 
         // 播放器
-//        track = new AudioTrack(
-//                AudioManager.STREAM_MUSIC,
-//                SAMPLE_RATE_IN_HZ,
-//                AudioFormat.CHANNEL_OUT_MONO,
-//                AudioFormat.ENCODING_PCM_16BIT,
-//                audioRecordRunnable.getBufferSize(),
-//                AudioTrack.MODE_STREAM
-//        );
         track = new AudioTrack.Builder()
                 .setAudioAttributes(new AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -157,14 +219,8 @@ public class MainActivity extends AppCompatActivity {
                         .build())
                 .setBufferSizeInBytes(audioRecordRunnable.getBufferSize())
                 .build();
-    }
 
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        this.audioRecordRunnable.close();
-        track.release();
-//        this.chart.clear();
+        initialized = true;
     }
 
     /**
@@ -173,12 +229,11 @@ public class MainActivity extends AppCompatActivity {
      */
     private void setData(ArrayList<Entry> values) {
 
-//        ArrayList<Entry> values = new ArrayList<>();
-//
-//        for (int i = 0; i < count; i++) {
-//            float val = (float) (Math.random() * range) + 50;
-//            values.add(new Entry(i, val));
-//        }
+        //ArrayList<Entry> values = new ArrayList<>();
+        //for (int i = 0; i < count; i++) {
+        //    float val = (float) (Math.random() * range) + 50;
+        //    values.add(new Entry(i, val));
+        //}
 
         LineDataSet lineDataSet;
 

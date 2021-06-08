@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">NoiseFighter</string>
+    <string name="RecordButton">Record</string>
 </resources>
