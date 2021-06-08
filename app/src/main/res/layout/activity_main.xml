@@ -10,7 +10,7 @@
         android:layout_height="wrap_content"
         android:layout_marginStart="10dp"
         android:layout_marginEnd="10dp"
-        android:text="@string/RecordButton"
+        android:text="@string/StartRecording"
         app:layout_constraintBottom_toTopOf="@+id/audio_chart"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="0.0"
