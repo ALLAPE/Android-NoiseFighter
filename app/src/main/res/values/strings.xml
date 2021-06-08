@@ -2,4 +2,5 @@
     <string name="app_name">NoiseFighter</string>
     <string name="StartRecording">Record</string>
     <string name="StopRecording">Stop &amp; Save</string>
+    <string name="RecordFilePathDefault">Tap RECORD to start</string>
 </resources>

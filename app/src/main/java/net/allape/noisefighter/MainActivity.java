@@ -14,6 +14,7 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.util.Log;
 import android.widget.Button;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -153,6 +154,10 @@ public class MainActivity extends AppCompatActivity {
 
         vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
 
+        // 录音文件
+        final TextView recordFilePath = findViewById(R.id.record_file_path);
+        recordFilePath.setText(R.string.RecordFilePathDefault);
+
         // 录音按钮
         final Button recordButton = findViewById(R.id.record_button);
         recordButton.setOnClickListener(view -> {
@@ -166,6 +171,7 @@ public class MainActivity extends AppCompatActivity {
                             throw new IOException("failed to create wav file: " + fileName);
                         }
                     }
+                    recordFilePath.setText(fileName);
                     wav = new RandomAccessFile(wavFile, "rw");
                     wav.seek(WAV_HEADER_SIZE);
                     Log.v(LOG_TAG, "start recording to file: " + fileName);
