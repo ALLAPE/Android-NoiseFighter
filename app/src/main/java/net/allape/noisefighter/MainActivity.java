@@ -45,7 +45,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int SAMPLE_RATE_IN_HZ = 44100;
 
     // 最大缓存数量, 超出时直接播放
-    private static final int RECORDED_MAX_SIZE = 10000;
+    private static final int RECORDED_MAX_SIZE = 1000;
     // 缓存录音
     private static final ArrayList<short[]> recorded = new ArrayList<>(RECORDED_MAX_SIZE);
 
@@ -53,8 +53,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean initialized = false;
 
     // 需要进行记录的阈值: 峰值达到这个阈值开始录音、离开这个阈值结束录音(如果已经开始录音了)
-    // = Short.MAX_VALUE / 3
-    private int threshold = 10000;
+    // private int threshold = 10000;
+    private int threshold = 33000;
     // 是否正在播放声音
     private boolean playing = false;
 
@@ -162,7 +162,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // 录音器
-        audioRecordRunnable = new AudioRecordRunnable(SAMPLE_RATE_IN_HZ, data -> {
+        audioRecordRunnable = new ToneRunnable(SAMPLE_RATE_IN_HZ, data -> {
 
             // 图表用的数据
             ArrayList<Entry> values = new ArrayList<>(data.length);
@@ -173,7 +173,7 @@ public class MainActivity extends AppCompatActivity {
                 short one = data[i];
 
                 // 避免显示过多
-                if (i % (1 << 4) == 0) {
+                if (i % (1 << 6) == 0) {
                     values.add(new Entry(i, one));
                 }
 
@@ -318,12 +318,12 @@ public class MainActivity extends AppCompatActivity {
     static class AudioRecordRunnable implements Runnable {
 
         // 采样率
-        private final int rateInHz;
+        protected final int rateInHz;
         // 录音回调
-        private final AudioRecordRunnableCallback callback;
+        protected final AudioRecordRunnableCallback callback;
 
         // 是否在下个循环停止录音
-        private boolean endAtNext = false;
+        protected boolean endAtNext = false;
         // buffer大小
         private final int bufferSize;
 
@@ -380,6 +380,61 @@ public class MainActivity extends AppCompatActivity {
 
         interface AudioRecordRunnableCallback {
             void onShortArray(short[] data);
+        }
+
+    }
+
+    /**
+     * 正弦发生器
+     */
+    static class ToneRunnable extends AudioRecordRunnable {
+
+        private static final int BUFFER_SIZE = 2048;
+
+        private final int frequency;
+
+        public ToneRunnable(int rateInHz, AudioRecordRunnableCallback callback) {
+            this(rateInHz, 1000, callback);
+        }
+
+        public ToneRunnable(int rateInHz, int frequency, AudioRecordRunnableCallback callback) {
+            super(rateInHz, callback);
+            this.frequency = frequency;
+        }
+
+        @Override
+        public void run() {
+            short[] buffer = new short[BUFFER_SIZE];
+            double increment = 2 * Math.PI * frequency / rateInHz;
+            double angle = 0;
+            double[] samples = new double[BUFFER_SIZE];
+
+            // 处理一个buffer所需要的时间
+            long oneBufferTime = 1000 / (rateInHz / BUFFER_SIZE);
+
+            while (!endAtNext) {
+                long beforeProcess = System.currentTimeMillis();
+                for (int i = 0; i < samples.length; i++) {
+                    samples[i] = Math.sin(angle);
+                    buffer[i] = (short) (samples[i] * Short.MAX_VALUE);
+                    angle = angle + increment;
+                }
+                try {
+                    long waitingTime = oneBufferTime - (System.currentTimeMillis() - beforeProcess);
+                    if (waitingTime > 0) {
+                        //noinspection BusyWait
+                        Thread.sleep(waitingTime);
+                    }
+                    callback.onShortArray(buffer);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        @Override
+        public int getBufferSize() {
+            return BUFFER_SIZE;
         }
 
     }
