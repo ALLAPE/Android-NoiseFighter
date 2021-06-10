@@ -53,11 +53,11 @@ public class MainActivity extends AppCompatActivity {
     private static final int WAV_HEADER_SIZE = 44;
 
     // OneShot震动
-    private static final VibrationEffect ONE_SHOT = VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE);
+    private static final VibrationEffect ONE_SHOT = VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE);
 
     // 采样率
-//    private static final int SAMPLE_RATE_IN_HZ = 44100;
-    private static final int SAMPLE_RATE_IN_HZ = 30000;
+    private static final int SAMPLE_RATE_IN_HZ = 44100;
+//    private static final int SAMPLE_RATE_IN_HZ = 30000;
     // 频道, 单声道为1
     private static final int CHANNEL = 1;
     // 码率 bytes per second
@@ -170,6 +170,7 @@ public class MainActivity extends AppCompatActivity {
         // 录音按钮
         final Button recordButton = findViewById(R.id.record_button);
         recordButton.setOnClickListener(view -> {
+            vibrator.vibrate(ONE_SHOT);
             // 初始化写入功能
             if (wav == null) {
                 try {
@@ -264,7 +265,10 @@ public class MainActivity extends AppCompatActivity {
 
         // 图表暂停/开始刷新按钮
         Button chartButton = findViewById(R.id.chart_button);
-        chartButton.setOnClickListener(view -> chartPaused = !chartPaused);
+        chartButton.setOnClickListener(view -> {
+            vibrator.vibrate(ONE_SHOT);
+            chartPaused = !chartPaused;
+        });
 
         // 图表
         chart = findViewById(R.id.audio_chart);
@@ -470,6 +474,7 @@ public class MainActivity extends AppCompatActivity {
             track.stop();
         } catch (Exception e) {
             e.printStackTrace();
+            Log.e(LOG_TAG, e.getMessage());
         } finally {
             playing = false;
             track.flush();
