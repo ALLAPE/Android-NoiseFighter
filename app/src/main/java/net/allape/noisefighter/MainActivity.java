@@ -67,8 +67,10 @@ public class MainActivity extends AppCompatActivity {
     // 音频采样格式
     private static final int SAMPLE_FORMAT = AudioFormat.ENCODING_PCM_16BIT;
 
+    // 触发之后需要延后录音的数量, 避免闪烁
+    private static final int RECORDED_TRAILING_SIZE = 10;
     // 最大缓存数量, 超出时直接播放
-    private static final int RECORDED_MAX_SIZE = 10000;
+    private static final int RECORDED_MAX_SIZE = 2000;
     // 缓存录音
     private static final ArrayList<byte[]> recorded = new ArrayList<>(RECORDED_MAX_SIZE);
 
@@ -80,6 +82,8 @@ public class MainActivity extends AppCompatActivity {
     private int threshold = 33000;
     // 是否正在播放声音
     private boolean playing = false;
+    // 防闪烁计数
+    private int trailingCount = RECORDED_TRAILING_SIZE;
 
     // 震动器
     Vibrator vibrator;
@@ -96,7 +100,7 @@ public class MainActivity extends AppCompatActivity {
     // 是否暂停图表刷新
     private boolean chartPaused = false;
     // 图表压缩内容的值
-    private final int chartScale = 1 << 4;
+    private final int chartScale = 1 << 5;
 
     private LineChart chart;
 
@@ -128,7 +132,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         if (micRunnable != null) micRunnable.close();
-        if (track != null) track.release();
         if (wav != null) {
             try {
                 wav.close();
@@ -327,13 +330,19 @@ public class MainActivity extends AppCompatActivity {
 
             // 正在播放声音时不处理任何数据
             if (!playing) {
-                if (peak >= threshold) {
+                boolean triggerThreshold = peak >= threshold;
+                if (triggerThreshold || trailingCount < RECORDED_TRAILING_SIZE) {
+                    if (triggerThreshold) trailingCount = 0;
                     // 图表背景颜色改为绿色
                     chart.setBackgroundColor(Color.RED);
-                    if (recorded.size() + 1 >= RECORDED_MAX_SIZE) {
+                    if (recorded.size() >= RECORDED_MAX_SIZE) {
                         play();
                     } else {
-                        recorded.add(data);
+                        // 噪音问题来源与
+                        byte[] newData = new byte[data.length];
+                        System.arraycopy(data, 0, newData, 0, newData.length);
+                        recorded.add(newData);
+                        trailingCount++;
                     }
                 } else {
                     chart.setBackgroundColor(Color.WHITE);
@@ -470,14 +479,15 @@ public class MainActivity extends AppCompatActivity {
             }
             Log.v(LOG_TAG, "Playback with: " + recorded.size() * shortLength + "bytes");
 
-            Thread.sleep(1000);
             track.stop();
+            track.flush();
+
+            Thread.sleep(1000);
         } catch (Exception e) {
             e.printStackTrace();
             Log.e(LOG_TAG, e.getMessage());
         } finally {
             playing = false;
-            track.flush();
             // 清空缓存
             recorded.clear();
         }
@@ -503,7 +513,7 @@ public class MainActivity extends AppCompatActivity {
             this.callback = callback;
 
             bufferSize = AudioRecord.getMinBufferSize(rateInHz,
-                    AudioFormat.CHANNEL_IN_MONO, SAMPLE_FORMAT);
+                    AudioFormat.CHANNEL_IN_MONO, SAMPLE_FORMAT) * 2;
         }
 
         @Override
